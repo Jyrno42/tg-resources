@@ -1,4 +1,5 @@
 import { ValidationError } from './errors';
+import { defaultParseErrors, defaultPrepareError } from './parseErrors';
 
 
 const DEFAULTS = {
@@ -7,8 +8,8 @@ const DEFAULTS = {
     headers: null,
     cookies: null,
 
-    prepareError: ValidationError.defaultPrepareError,
-    parseErrors: ValidationError.defaultParseErrors,
+    prepareError: defaultPrepareError,
+    parseErrors: defaultParseErrors,
 
     statusSuccess: [200, 201, 204],
     statusValidationError: [400],

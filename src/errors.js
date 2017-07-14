@@ -1,5 +1,6 @@
 import { isArray, isObject, isString } from './typeChecks';
 import { truncate } from './util';
+import { defaultParseErrors, defaultPrepareError } from './parseErrors';
 
 
 export class BaseResourceError {
@@ -49,29 +50,22 @@ export class InvalidResponseCode extends BaseResourceError {
     }
 }
 
+export class RequestValidationError extends InvalidResponseCode {
+    _options = null;
+    _parent = null;
 
-export class ValidationError extends InvalidResponseCode {
-    constructor(err, options = null, isPrepared = false) {
-        if (isPrepared) {
-            err = {
-                responseText: err,
-            };
-        }
+    constructor(statusCode, responseText, options = null) {
+        // Set custom options
+        this._customOptions = options;
 
-        err = {
-            statusCode: 0,
-            responseText: '',
-            ...err,
-        };
+        // Set parent if provided
+        this._setParent(parent);
 
-        super(err.statusCode, err.responseText, 'ValidationError');
-
-        this._customOptions = options || {};
-        this.errors = {};
-        this.nonFieldErrors = null;
-
-        this.__parseErrors(err.responseText);
+        // parse error body (side-effect: forces I{options} to be resolved)
+        this._errors = ValidationError.parseToInternal(responseText, this.options);
     }
+
+    // public api
 
     get isValidationError() { // eslint-disable-line class-methods-use-this
         return true;
@@ -79,6 +73,44 @@ export class ValidationError extends InvalidResponseCode {
 
     get isInvalidResponseCode() { // eslint-disable-line class-methods-use-this
         return false;
+    }
+
+    get errors() {
+        return this._errors;
+    }
+
+    // parents + options
+
+    get parent() {
+        return this._parent;
+    }
+
+    _setParent(parent) {
+        this._parent = parent;
+    }
+
+    get isBound() {
+        return !!this._parent || !!this._options;
+    }
+
+    get options() {
+        if (!this._options) {
+            return mergeOptions(
+                DEFAULTS,
+                this._parent ? this._parent.options : null,
+                this._customOptions,
+            );
+        }
+
+        return this._options;
+    }
+}
+
+
+export class ValidationError {
+    constructor(errors, nonFieldErrors = null) {
+        this.errors = errors || {};
+        this.nonFieldErrors = null;
     }
 
     getError(fieldName, allowNonFields) {
@@ -110,60 +142,10 @@ export class ValidationError extends InvalidResponseCode {
         return null;
     }
 
-    __prepareError(err) {
-        return ((this._customOptions ? this._customOptions.prepareError : null) || ValidationError.defaultPrepareError)(err, this);
-    }
-
-    __parseErrors(errorText) {
-        const handler = (this._customOptions ? this._customOptions.parseErrors : null) || ValidationError.defaultParseErrors;
-        const result = handler(errorText, this);
-
-        this.nonFieldErrors = result[0];
-        this.errors = result[1];
-    }
-
-    static defaultParseErrors(errorText, instance) {
-        if (isString(errorText)) {
-            if (errorText) {
-                errorText = JSON.parse(errorText);
-            } else {
-                errorText = {};
-            }
-        }
-
-        let resNonField = null;
-        const resErrors = {};
-
-        const errors = typeof errorText.errors === 'undefined' ? errorText : errorText.errors;
-        Object.keys(errors).forEach((key) => {
-            if (key === 'non_field_errors') {
-                resNonField = instance.__prepareError(errors[key]);
-            }
-
-            else {
-                resErrors[key] = instance.__prepareError(errors[key]);
-            }
+    static parseToInternal(errorText, options) {
+        return options.parseErrors(errorText, {
+            parseErrors: options.parseErrors,
+            prepareError: options.prepareError,
         });
-
-        return [resNonField, resErrors];
-    }
-
-    static defaultPrepareError(err, instance) {
-        if (isString(err)) {
-            return err;
-        }
-
-        else if (isArray(err)) {
-            return err.join(', ');
-        }
-
-        else if (isObject(err)) {
-            // Note: We clone the object just in case
-            return new ValidationError(Object.assign({}, err), instance ? instance._customOptions : null, true);
-        }
-
-        else {
-            return `${err}`;
-        }
     }
 }

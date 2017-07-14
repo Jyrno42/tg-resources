@@ -8,31 +8,112 @@ const responseBody = {
     statusCode: 400,
     responseText: JSON.stringify({
         errors: {
-            // Converted to single string
-            non_field_errors: [
+            non_field_errors: [                              // string (joined by space)
                 'Something is generally broken',
             ],
 
-            // Converted to a string joined by a comma
-            password: [
+            password: [                                      // string (joined by space)
                 'too short',
                 'missing numbers',
             ],
 
-            // JSON stringify is used
-            email: {
-                something: 'be wrong yo',
+            email: {                                         // Nested (object) ValidationError
+                something: 'be wrong yo',                    // string
             },
 
             // Will be converted to a string
             remember: false,
+
+            deliveryAddress: [                               // Nested (list) ValidationError
+                {                                            // Nested (object) ValidationError
+                    non_field_errors: [
+                        'Provided address is not supported', // string (joined by space)
+                    ],
+                },
+                null,                                        // null
+                {                                            // Nested (object) ValidationError
+                    zip: 'Please enter a valid address',     // string
+                    country: [                               // string (joined by space)
+                        'This field is required.',
+                        'Please select a valid country.'
+                    ]
+                },
+                undefined,                                   // null (since no errors)
+                {                                            // null (since no errors)
+                    non_field_errors: [],
+                },
+                {}                                           // null (since no errors)
+            ],
+
+            paymentMethods: []                               // null
         },
     }),
 };
 
+/*
+Expected result:
+
+ValidationError({
+    nonFieldErrors: 'Something is generally broken',
+    errors: {
+        password: 'Too short, missing numbers',
+        email: ValidationError({
+            nonFieldErrors: null,
+            errors: {
+                something: 'be wrong yo',
+            },
+        }),
+        remember: 'false',
+        deliveryAddress: ListValidationError({
+            nonFieldErrors: undefined,  // unused for list validation errors (e.g. always undefined)
+            errors: [
+                ValidationError({
+                    nonFieldErrors: 'Provided address is not supported',
+                    errors: {},
+                }),
+                null,
+                ValidationError({
+                    nonFieldErrors: null,
+                    errors: {
+                        zip: 'Please enter a valid address',
+                        country: 'This field is required. Please select a valid country.',
+                    }
+                }),
+                null,
+                null,
+                null,
+            ],
+        }),
+        // paymentMethods omitted since it evaluates to an empty array (which are ignored)
+    }
+})*/
+
+// Split ValidationError to RequestValidationError and ValidationError
+//
+//  Why: Simplifies code for validationError (and keeps response specific logic separate from
+//   error handling logic)
+//
+//    RequestValidationError.isValidationError => true
+//    get RequestValidationError.error : ValidationError => RequestValidationError._error
+//    get RequestValidationError.errors => RequestValidationError.error (proxy, mby remove (?) or 
+//        use errors everywhere so api is similar to ValidationError)
+//
+//    get ValidationErrors.errors : {str: ?ValidationError} => ValidationErrors._errors
+//
+//  Note: Must remain as configurable as it was (ideally we would increase configurability w/ this change)
+
+const getValidationErrorWithNonField = nonField => (new ValidationError({
+    responseText: JSON.stringify({
+        errors: {
+            non_field_errors: nonField,
+            foo: ['bar', 'baz'],
+        },
+    }),
+}));
+
 
 export default {
-    'ValidationError api': {
+    'ValidationError api:': {
         beforeEach() {
             instance = new ValidationError(responseBody);
         },
@@ -94,13 +175,13 @@ export default {
         'firstError works': () => {
             expect(instance.firstError).to.be.a('function');
 
-            // First error without allowNonField should be the password error
+            // First error without allowNonField MUST be the password error
             expect(instance.firstError()).to.be.equal('too short, missing numbers');
 
-            // First error with allowNonField should be the nonFieldError
+            // First error with allowNonField MUST be the nonFieldError
             expect(instance.firstError(true)).to.be.equal('Something is generally broken');
 
-            // First error with allowNonField without non_field_errors should be a field error
+            // First error with allowNonField without non_field_errors MUST be a field error
             expect(new ValidationError({
                 responseText: JSON.stringify({
                     errors: {
@@ -109,20 +190,28 @@ export default {
                 }),
             }).firstError(true)).to.be.equal('bar, baz');
 
-            // If non_field_errors is an empty array, we want to be sure we don't handle it as an error
-            expect(new ValidationError({
-                responseText: JSON.stringify({
-                    errors: {
-                        non_field_errors: [],
-                        foo: ['bar', 'baz'],
-                    },
-                }),
-            }).firstError(true)).to.be.equal('bar, baz');
-
-            // If no errors it should return null
+            // If no errors it MUST return null
             expect(new ValidationError({
                 responseText: '{}',
             }).firstError()).to.be.a('null');
+        },
+        'True evaluates to an error (nonFieldErrors)': () => {
+            // also MUST be converted to str
+            expect(getValidationErrorWithNonField(true).nonFieldErrors).to.be.equal('true');
+        },
+        'empty string evaluates to null (nonFieldErrors)': () => {
+            expect(getValidationErrorWithNonField('').nonFieldErrors).to.be.a('null');
+        },
+        'undefined/null/false evaluate to null (nonFieldErrors)': () => {
+            expect(getValidationErrorWithNonField(undefined).nonFieldErrors).to.be.a('null');
+            expect(getValidationErrorWithNonField(null).nonFieldErrors).to.be.a('null');
+            expect(getValidationErrorWithNonField(false).nonFieldErrors).to.be.a('null');
+        },
+        'empty array evaluates to null (nonFieldErrors)': () => {
+            expect(getValidationErrorWithNonField([]).nonFieldErrors).to.be.a('null');
+        },
+        'empty object evaluates to null (nonFieldErrors)': () => {
+            expect(getValidationErrorWithNonField({}).nonFieldErrors).to.be.a('null');
         },
     },
 };
